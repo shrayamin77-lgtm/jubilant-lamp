@@ -40,12 +40,22 @@ resident_input = st.selectbox("Select your name:", rotation_data["Resident"].tol
 date_input = st.selectbox("Select the weekend date you're scheduled for:", weekend_coverage["Date"].tolist())
 
 if st.button("🔄 Find Swap Options"):
-    eligible = [
-        name for name in rotation_data["Resident"]
-        if name != resident_input and is_on_elective(name, date_input)
-    ]
+    eligible = []
+    for name in rotation_data["Resident"]:
+        if name != resident_input and is_on_elective(name, date_input):
+            # Find what date that person is currently scheduled
+            for col in ["Day 1", "Night 1", "Night 2"]:
+                match = weekend_coverage[weekend_coverage[col].astype(str).str.lower() == name.lower()]
+                if not match.empty:
+                    scheduled_date = match.iloc[0]["Date"]
+                    eligible.append(f"{name} (Scheduled: {scheduled_date})")
+                    break
+            else:
+                eligible.append(f"{name} (Not currently scheduled)")
+    
     if eligible:
-        st.success(f"You can swap with the following residents for {date_input}:")
-        st.write(", ".join(eligible))
+        st.success(f"✅ You can swap with the following residents for {date_input}:")
+        for entry in eligible:
+            st.markdown(f"- {entry}")
     else:
         st.warning("No eligible residents available for swap on that date.")
