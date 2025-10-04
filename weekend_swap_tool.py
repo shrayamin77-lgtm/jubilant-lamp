@@ -10,11 +10,10 @@ def load_data():
 
 rotation_data, weekend_coverage = load_data()
 
-# Extract block dates from header
 block_date_ranges = rotation_data.iloc[0, 1:]
 block_start_dates = [datetime.strptime(d.split("-")[0], "%m/%d/%y") for d in block_date_ranges]
 block_end_dates = [datetime.strptime(d.split("-")[1], "%m/%d/%y") for d in block_date_ranges]
-rotation_data = rotation_data.iloc[1:]  # remove date header row
+rotation_data = rotation_data.iloc[1:] 
 rotation_data = rotation_data.rename(columns={"Unnamed: 0": "Resident"})
 
 def find_block_for_date(date_str):
@@ -43,7 +42,6 @@ if st.button("🔄 Find Swap Options"):
     eligible = []
     for name in rotation_data["Resident"]:
         if name != resident_input and is_on_elective(name, date_input):
-            # Find what date that person is currently scheduled
             for col in ["Day 1", "Night 1", "Night 2"]:
                 match = weekend_coverage[weekend_coverage[col].astype(str).str.lower() == name.lower()]
                 if not match.empty:
