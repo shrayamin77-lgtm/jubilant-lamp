@@ -46,47 +46,57 @@ def get_block_column_for_date(target_date_str):
 st.set_page_config(page_title="Weekend Swap Finder", page_icon="🏥", layout="centered")
 st.title("🏥 Weekend Swap Finder")
 
-# Dropdown list displays clean last names
+# 1. Select Resident Name
 resident_list = sorted(rotation_data["Resident"].tolist())
 resident_input = st.selectbox("Select your last name:", resident_list)
 
-date_list = weekend_coverage["Date"].tolist()
-date_input = st.selectbox("Select the weekend date you need to swap out of:", date_list)
+# 2. DYNAMICALLY FILTER THE DATES FOR THE SELECTED RESIDENT
+# Filter rows where the selected last name appears in the Scheduled_Coverage column
+user_scheduled_shifts = weekend_coverage[
+    weekend_coverage["Scheduled_Coverage"].astype(str).str.lower().str.contains(resident_input.lower(), na=False)
+]
+user_dates = user_scheduled_shifts["Date"].tolist()
 
-if st.button("🔄 Search Eligible Swappers"):
-    target_block_col = get_block_column_for_date(date_input)
+# 3. Date Dropdown - dynamically switches options based on name selection
+if user_dates:
+    date_input = st.selectbox("Select the weekend date you need to swap out of:", user_dates)
     
-    if not target_block_col:
-        st.error("Could not map the selected weekend date to an academic block.")
-    else:
-        eligible_matches = []
+    if st.button("🔄 Search Eligible Swappers"):
+        target_block_col = get_block_column_for_date(date_input)
         
-        for _, row in rotation_data.iterrows():
-            co_intern = row["Resident"]
-            
-            # Skip yourself
-            if co_intern == resident_input:
-                continue
-                
-            # Check if they are on an Elective block
-            if row[target_block_col] == "Elective":
-                
-                # Check when this co-intern is scheduled to work floor shifts
-                co_intern_shifts = weekend_coverage[
-                    weekend_coverage["Scheduled_Coverage"].astype(str).str.lower().str.contains(co_intern.lower(), na=False)
-                ]
-                
-                if not co_intern_shifts.empty:
-                    shift_dates = co_intern_shifts["Date"].tolist()
-                    formatted_dates = ", ".join(shift_dates)
-                    eligible_matches.append(f"**{co_intern}** (Scheduled: {formatted_dates})")
-                else:
-                    eligible_matches.append(f"**{co_intern}** (Not working any floor weekends)")
-        
-        st.markdown("---")
-        if eligible_matches:
-            st.success(f"✅ **{len(eligible_matches)} potential swap options found** for {date_input} (Block: {target_block_col}):")
-            for match in eligible_matches:
-                st.markdown(f"- {match}")
+        if not target_block_col:
+            st.error("Could not map the selected weekend date to an academic block.")
         else:
-            st.warning(f"No co-interns are currently on an Elective block during the {target_block_col} window.")
+            eligible_matches = []
+            
+            for _, row in rotation_data.iterrows():
+                co_intern = row["Resident"]
+                
+                # Skip yourself
+                if co_intern == resident_input:
+                    continue
+                    
+                # Check if they are on an Elective block
+                if row[target_block_col] == "Elective":
+                    
+                    # Check when this co-intern is scheduled to work floor shifts
+                    co_intern_shifts = weekend_coverage[
+                        weekend_coverage["Scheduled_Coverage"].astype(str).str.lower().str.contains(co_intern.lower(), na=False)
+                    ]
+                    
+                    if not co_intern_shifts.empty:
+                        shift_dates = co_intern_shifts["Date"].tolist()
+                        formatted_dates = ", ".join(shift_dates)
+                        eligible_matches.append(f"**{co_intern}** (Scheduled: {formatted_dates})")
+                    else:
+                        eligible_matches.append(f"**{co_intern}** (Not working any floor weekends)")
+            
+            st.markdown("---")
+            if eligible_matches:
+                st.success(f"✅ **{len(eligible_matches)} potential swap options found** for {date_input} (Block: {target_block_col}):")
+                for match in eligible_matches:
+                    st.markdown(f"- {match}")
+            else:
+                st.warning(f"No co-interns are currently on an Elective block during the {target_block_col} window.")
+else:
+    st.info(f"🎉 **{resident_input}** is not scheduled for any floor coverage weekends in this file!")
