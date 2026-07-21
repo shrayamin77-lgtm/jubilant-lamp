@@ -2,65 +2,91 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
+# --- PASSWORD PROTECTION ---
+def check_password():
+    """Returns True if the user had the correct password."""
+    def password_entered():
+        if st.session_state["password"] == st.secrets["PASSWORD"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        st.text_input("Enter residency password to access the tool:", type="password", on_change=password_entered, key="password")
+        return False
+    elif not st.session_state["password_correct"]:
+        st.text_input("Enter residency password to access the tool:", type="password", on_change=password_entered, key="password")
+        st.error("😕 Password incorrect")
+        return False
+    else:
+        return True
+
+if not check_password():
+    st.stop()
+
+# --- DATA LOADING ---
 @st.cache_data
 def load_data():
     rotation_matrix = pd.read_csv("clean_schedule_matrix.csv")
     weekend_coverage = pd.read_csv("weekend_coverage_schedule.csv")
+    
+    rotation_matrix["Resident"] = rotation_matrix["Resident"].astype(str).str.strip()
+    weekend_coverage["Date"] = weekend_coverage["Date"].astype(str).str.strip()
+    weekend_coverage["Scheduled_Coverage"] = weekend_coverage["Scheduled_Coverage"].astype(str).str.strip()
+    
     return rotation_matrix, weekend_coverage
 
 rotation_data, weekend_coverage = load_data()
 
-# --- PARSE DATE WINDOWS FROM THE MATRIX HEADERS ---
+# --- DATE PARSING ---
 block_intervals = []
 for col in rotation_data.columns:
-    if col == "Resident":
-        continue
+    if col == "Resident": continue
     try:
         start_str, end_str = col.split("-")
-        start_month, start_day = map(int, start_str.strip().split("/"))
-        end_month, end_day = map(int, end_str.strip().split("/"))
-        
-        start_yr = 2026 if start_month >= 7 else 2027
-        end_yr = 2026 if end_month >= 7 else 2027
-        
-        start_date = datetime(start_yr, start_month, start_day)
-        end_date = datetime(end_yr, end_month, end_day)
-        
-        block_intervals.append({"column": col, "start": start_date, "end": end_date})
-    except Exception:
-        continue
+        s_m, s_d = map(int, start_str.strip().split("/"))
+        e_m, e_d = map(int, end_str.strip().split("/"))
+        s_yr = 2026 if s_m >= 7 else 2027
+        e_yr = 2026 if e_m >= 7 else 2027
+        block_intervals.append({"column": col, "start": datetime(s_yr, s_m, s_d), "end": datetime(e_yr, e_m, e_d)})
+    except Exception: continue
 
 def get_block_column_for_date(target_date_str):
     try:
-        target_dt = datetime.strptime(target_date_str, "%m/%d/%Y")
-    except ValueError:
-        st.error(f"Date format error for {target_date_str}. Expected MM/DD/YYYY.")
-        return None
-        
-    for interval in block_intervals:
-        if interval["start"] <= target_dt <= interval["end"]:
-            return interval["column"]
+        target_dt = pd.to_datetime(target_date_str)
+        for interval in block_intervals:
+            if interval["start"] <= target_dt <= interval["end"]:
+                return interval["column"]
+    except: return None
     return None
 
+def is_resident_scheduled(coverage_str, target_name):
+    names_list = [name.strip().lower() for name in str(coverage_str).split(",")]
+    return target_name.lower() in names_list
+
+def is_working(resident_name, check_date_str):
+    shift_df = weekend_coverage[weekend_coverage["Date"] == check_date_str]
+    if shift_df.empty: return False
+    return is_resident_scheduled(shift_df.iloc[0]["Scheduled_Coverage"], resident_name)
+
 # --- STREAMLIT UI ---
-st.set_page_config(page_title="Weekend Swap Finder", page_icon="🏥", layout="centered")
+st.set_page_config(page_title="Weekend Swap Finder", page_icon="🏥")
 st.title("🏥 Weekend Swap Finder")
 
-# 1. Select Resident Name
 resident_list = sorted(rotation_data["Resident"].tolist())
 resident_input = st.selectbox("Select your last name:", resident_list)
 
-# 2. DYNAMICALLY FILTER THE DATES FOR THE SELECTED RESIDENT
-# Filter rows where the selected last name appears in the Scheduled_Coverage column
 user_scheduled_shifts = weekend_coverage[
-    weekend_coverage["Scheduled_Coverage"].astype(str).str.lower().str.contains(resident_input.lower(), na=False)
+    weekend_coverage["Scheduled_Coverage"].apply(lambda x: is_resident_scheduled(x, resident_input))
 ]
-user_dates = user_scheduled_shifts["Date"].tolist()
+user_dates = sorted(user_scheduled_shifts["Date"].tolist())
 
-# 3. Date Dropdown - dynamically switches options based on name selection
 if user_dates:
-    date_input = st.selectbox("Select the weekend date you need to swap out of:", user_dates)
-    
+    with st.form(key="swap_search_form"):
+        date_input = st.selectbox("Select the weekend date you need to swap out of:", user_dates)
+        submit_button = st.form_submit_button(label="🔄 Search Eligible Swappers")
+        
     if submit_button:
         target_date_dt = pd.to_datetime(date_input)
         my_block_col = get_block_column_for_date(date_input)
@@ -70,13 +96,6 @@ if user_dates:
         eligible_matches = []
         my_row = rotation_data[rotation_data["Resident"] == resident_input].iloc[0]
         
-        # Helper to check if a specific resident is working on a specific date
-        def is_working(resident_name, check_date_str):
-            shift_df = weekend_coverage[weekend_coverage["Date"] == check_date_str]
-            if shift_df.empty: return False
-            coverage_list = [n.strip().lower() for n in str(shift_df.iloc[0]["Scheduled_Coverage"]).split(",")]
-            return resident_name.lower() in coverage_list
-
         for _, row in rotation_data.iterrows():
             co_intern = row["Resident"]
             if co_intern == resident_input: continue
@@ -103,7 +122,6 @@ if user_dates:
                 
                 # 3. YOU must be on Elective during THEIR shift date
                 i_am_elective_for_partner = my_row[partner_block_col] == "Elective"
-                
                 # 4. YOU must not already be working their shift date
                 i_am_already_working = is_working(resident_input, partner_date)
                 
@@ -117,7 +135,8 @@ if user_dates:
         
         if eligible_matches:
             st.success(f"✅ Found {len(eligible_matches)} clean reciprocal swap opportunities:")
-            df_results = pd.DataFrame(eligible_matches)
-            st.table(df_results)
+            st.table(pd.DataFrame(eligible_matches))
         else:
             st.warning("No reciprocal swaps found where both parties are free to cover the other.")
+else:
+    st.info(f"🎉 **{resident_input}** is not scheduled for any floor coverage weekends!")
