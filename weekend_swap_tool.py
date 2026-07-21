@@ -59,10 +59,18 @@ for col in rotation_data.columns:
     if col == "Resident": continue
     try:
         start_str, end_str = col.split("-")
-        s_m, s_d = map(int, start_str.strip().split("/"))
-        e_m, e_d = map(int, end_str.strip().split("/"))
-        s_yr = 2026 if s_m >= 7 else 2027
-        e_yr = 2026 if e_m >= 7 else 2027
+        
+        # Safely split by slash (works for MM/DD and MM/DD/YYYY)
+        s_parts = start_str.strip().split("/")
+        e_parts = end_str.strip().split("/")
+        
+        s_m, s_d = int(s_parts[0]), int(s_parts[1])
+        e_m, e_d = int(e_parts[0]), int(e_parts[1])
+        
+        # Assign year dynamically if it isn't in the column header
+        s_yr = int(s_parts[2]) if len(s_parts) == 3 else (2026 if s_m >= 7 else 2027)
+        e_yr = int(e_parts[2]) if len(e_parts) == 3 else (2026 if e_m >= 7 else 2027)
+        
         block_intervals.append({"column": col, "start": datetime(s_yr, s_m, s_d), "end": datetime(e_yr, e_m, e_d)})
     except Exception: continue
 
@@ -101,6 +109,10 @@ if user_dates:
     if submit_button:
         target_date_dt = pd.to_datetime(date_input)
         my_block_col = get_block_column_for_date(date_input)
+        
+        if not my_block_col:
+            st.error(f"⚠️ Could not identify the rotation block for {date_input}. Check matrix date headers.")
+            st.stop()
         
         st.write(f"Searching for **mutually eligible** partners to swap {date_input} (Your Block: {my_block_col}).")
         
