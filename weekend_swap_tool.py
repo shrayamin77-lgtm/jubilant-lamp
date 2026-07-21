@@ -24,7 +24,7 @@ if not check_password():
 st.set_page_config(page_title="Weekend Shift Swap Tool", page_icon="📅")
 st.title("📅 Weekend Shift Swap Tool")
 
-role = st.radio("Select Your PGY Level:", ["Intern (PGY-1)", "Senior (PGY-2 / PGY-3)"], horizontal=True)
+role = st.radio("Select Your PGY Level:", ["Intern (PGY-1)", "Senior (PGY-2 / PGY-3)"], horizontal=True, key="pgy_role_select")
 
 # Assign files based on selected role
 if role == "Intern (PGY-1)":
@@ -166,24 +166,24 @@ all_scheduled_residents = sorted(list(set(
     matrix_df[res_col_name].unique().tolist() + weekend_df["Scheduled_Coverage"].unique().tolist()
 )))
 
-selected_resident = st.selectbox(f"Select Your Last Name ({role}):", all_scheduled_residents)
+selected_resident = st.selectbox(f"Select Your Last Name ({role}):", all_scheduled_residents, key="res_select")
 
 # Find weekend dates assigned to selected resident
 user_shifts = weekend_df[weekend_df["Scheduled_Coverage"].apply(lambda x: is_same_resident(selected_resident, x))]
 user_dates = sorted(user_shifts["Date"].unique(), key=lambda x: parse_academic_date(x) or datetime.min.date())
 
 if user_dates:
-    selected_date = st.selectbox("Select the Weekend Shift Date You Need to Swap Out Of:", user_dates)
+    selected_date = st.selectbox("Select the Weekend Shift Date You Need to Swap Out Of:", user_dates, key="shift_date_select")
     
     # Verify user's rotation status on that date
     user_rot = get_rotation_for_date(selected_resident, selected_date)
     if user_rot.lower() != "elective":
         st.warning(f"⚠️ You are listed on **{user_rot}** during {selected_date}. Shift swaps typically require being on an Elective block.")
 
-    if st.button("🔎 Search Weekend Shift Swaps"):
+    if st.button("🔎 Search Weekend Shift Swaps", key="search_swaps_btn"):
         eligible_swaps = []
         
-        for _, row in weekend_df.iterrows():
+        for idx, row in weekend_df.iterrows():
             other_resident = str(row["Scheduled_Coverage"]).strip()
             other_date = str(row["Date"]).strip()
             
@@ -204,145 +204,6 @@ if user_dates:
             i_am_already_working_their_date = not weekend_df[
                 (weekend_df["Date"] == other_date) & 
                 (weekend_df["Scheduled_Coverage"].apply(lambda x: is_same_resident(selected_resident, x)))
-            ].empty
-            
-            if other_on_elective_for_my_date and i_am_on_elective_for_their_date:
-                if other_already_working_my_date or i_am_already_working_their_date:
-                    status = "🔴 Shift Overlap / Conflict"
-                    notes = "One resident is already working a floor shift on that date"
-                else:
-                    status = "🟢 Eligible Swap Partner"
-                    notes = "Both on Elective & free of floor shifts"
-
-                eligible_swaps.append({
-                    "Status": status,
-                    "Swap With": other_resident,
-                    "Their Shift Date": other_date,
-                    "Their Rotation": get_rotation_for_date(other_resident, other_date),
-                    "Notes": notes
-                })
-
-        if eligible_swaps:
-            df_swaps = pd.DataFrame(eligible_swaps).drop_duplicates()
-            st.success(f"✅ Found {len(df_swaps)} possible weekend swap options for {selected_date}:")
-            st.caption("🟢 **Green Dot:** Clear of floor shifts & verified on Elective. | 🔴 **Red Dot:** Elective verified, but has a shift overlap.")
-            st.table(df_swaps)
-        else:
-            st.warning("No eligible reciprocal weekend swaps found for this shift date.")
-else:
-    st.info(f"No scheduled weekend floor shifts found for **{selected_resident}**.")
-matrix_df, weekend_df = load_data(matrix_file, weekend_file)
-
-# --- HELPER FUNCTIONS ---
-def parse_academic_date(date_str):
-    """Safely converts date strings (with or without years) into accurate academic year dates."""
-    try:
-        clean_s = str(date_str).strip()
-        parts = clean_s.split("/")
-        month = int(parts[0])
-        day = int(parts[1])
-        
-        if len(parts) == 3:
-            year = int(parts[2])
-            if year < 100:
-                year += 2000
-        else:
-            year = 2026 if month >= 7 else 2027
-            
-        return datetime(year, month, day).date()
-    except Exception:
-        return None
-
-def is_same_resident(target, candidate):
-    """Normalizes names to check equality regardless of spacing or periods."""
-    t = re.sub(r'\s+', ' ', str(target).lower().replace(".", " ")).strip()
-    c = re.sub(r'\s+', ' ', str(candidate).lower().replace(".", " ")).strip()
-    return t == c
-
-def get_rotation_for_date(resident_name, shift_date_str):
-    """Determines what rotation block a resident is on during a given weekend shift date."""
-    target_dt = parse_academic_date(shift_date_str)
-    if not target_dt:
-        return "Unknown"
-        
-    matching_col = None
-    for col in matrix_df.columns:
-        if col == "Resident": 
-            continue
-        try:
-            # Handle standard hyphen '-', en-dash '–', or em-dash '—'
-            normalized_col = col.replace("–", "-").replace("—", "-")
-            col_parts = normalized_col.split("-")
-            
-            col_start = parse_academic_date(col_parts[0].strip())
-            col_end = parse_academic_date(col_parts[1].strip())
-            
-            if col_start and col_end and (col_start <= target_dt <= col_end):
-                matching_col = col
-                break
-        except Exception:
-            continue
-
-    if not matching_col:
-        return "Unknown"
-
-    res_row = matrix_df[matrix_df["Resident"].apply(lambda x: is_same_resident(x, resident_name))]
-    if res_row.empty:
-        return "Unknown"
-
-    return str(res_row.iloc[0][matching_col]).strip()
-
-def is_on_elective(resident_name, shift_date_str):
-    """Verifies if resident is on Elective status on the target date."""
-    rot = get_rotation_for_date(resident_name, shift_date_str)
-    return rot.lower() == "elective"
-
-# --- USER INTERFACE & SWAP LOGIC ---
-st.write("Find residents to swap **weekend floor coverage shifts** with. Both residents must be on **Elective** during the shift dates.")
-
-# Get list of residents who have scheduled weekend shifts
-all_scheduled_residents = sorted(list(set(
-    matrix_df["Resident"].unique().tolist() + weekend_df["Scheduled_Coverage"].unique().tolist()
-)))
-
-selected_resident = st.selectbox(f"Select Your Last Name ({role}):", all_scheduled_residents)
-
-# Find weekend dates assigned to selected resident
-user_shifts = weekend_df[weekend_df["Scheduled_Coverage"].apply(lambda x: is_same_resident(x, selected_resident))]
-user_dates = sorted(user_shifts["Date"].unique(), key=lambda x: parse_academic_date(x) or datetime.min.date())
-
-if user_dates:
-    selected_date = st.selectbox("Select the Weekend Shift Date You Need to Swap Out Of:", user_dates)
-    
-    # Verify user's rotation status on that date
-    user_rot = get_rotation_for_date(selected_resident, selected_date)
-    if user_rot.lower() != "elective":
-        st.warning(f"⚠️ You are listed on **{user_rot}** during {selected_date}. Shift swaps typically require being on an Elective block.")
-
-    if st.button("🔎 Search Weekend Shift Swaps"):
-        eligible_swaps = []
-        
-        for _, row in weekend_df.iterrows():
-            other_resident = str(row["Scheduled_Coverage"]).strip()
-            other_date = str(row["Date"]).strip()
-            
-            # Skip self or same shift date
-            if is_same_resident(other_resident, selected_resident) or other_date == selected_date:
-                continue
-                
-            # Check reciprocal Elective status
-            other_on_elective_for_my_date = is_on_elective(other_resident, selected_date)
-            i_am_on_elective_for_their_date = is_on_elective(selected_resident, other_date)
-            
-            # Check if either resident is already working on the prospective swap date
-            other_already_working_my_date = not weekend_df[
-                (weekend_df["Date"] == selected_date) & 
-                (weekend_df["Scheduled_Coverage"].apply(lambda x: is_same_resident(x, other_resident)))
-            ].empty
-            
-            i_am_already_working_their_date = not weekend_df[
-                (weekend_df["Date"] == other_date) & 
-                (weekend_df["Scheduled_Coverage"].apply(lambda x: is_same_resident(x, selected_resident)))
             ].empty
             
             if other_on_elective_for_my_date and i_am_on_elective_for_their_date:
