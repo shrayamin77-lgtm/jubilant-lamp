@@ -34,7 +34,7 @@ else:
     matrix_file = "senior_schedule_matrix.csv"
     weekend_file = "senior_weekend_coverage_schedule.csv"
 
-# --- DATA LOADING & HARDENING ---
+# --- DATA LOADING ---
 @st.cache_data
 def load_data(m_file, w_file):
     try:
@@ -42,7 +42,7 @@ def load_data(m_file, w_file):
         matrix_df["Resident"] = matrix_df["Resident"].astype(str).str.strip()
         matrix_df.columns = [str(c).strip() for c in matrix_df.columns]
         
-        # Robust loader for weekend schedule (handles unpivoted or comma-separated rows)
+        # Custom reader for weekend coverage to handle any comma formatting issues
         weekend_rows = []
         with open(w_file, 'r', encoding='utf-8-sig') as f:
             header = f.readline()
@@ -100,11 +100,16 @@ def get_rotation_for_date(resident_name, shift_date_str):
         
     matching_col = None
     for col in matrix_df.columns:
-        if col == "Resident": continue
+        if col == "Resident": 
+            continue
         try:
-            col_parts = col.split("-")
+            # Handle standard hyphen '-', en-dash '–', or em-dash '—'
+            normalized_col = col.replace("–", "-").replace("—", "-")
+            col_parts = normalized_col.split("-")
+            
             col_start = parse_academic_date(col_parts[0].strip())
             col_end = parse_academic_date(col_parts[1].strip())
+            
             if col_start and col_end and (col_start <= target_dt <= col_end):
                 matching_col = col
                 break
@@ -150,16 +155,15 @@ if user_dates:
     if st.button("🔎 Search Weekend Shift Swaps"):
         eligible_swaps = []
         
-        # Iterate over all other shift assignments in the schedule
         for _, row in weekend_df.iterrows():
-            other_resident = row["Scheduled_Coverage"].strip()
-            other_date = row["Date"].strip()
+            other_resident = str(row["Scheduled_Coverage"]).strip()
+            other_date = str(row["Date"]).strip()
             
-            # Skip self or same date
+            # Skip self or same shift date
             if is_same_resident(other_resident, selected_resident) or other_date == selected_date:
                 continue
                 
-            # Check reciprocal Elective status for both dates
+            # Check reciprocal Elective status
             other_on_elective_for_my_date = is_on_elective(other_resident, selected_date)
             i_am_on_elective_for_their_date = is_on_elective(selected_resident, other_date)
             
@@ -174,10 +178,10 @@ if user_dates:
                 (weekend_df["Scheduled_Coverage"].apply(lambda x: is_same_resident(x, selected_resident)))
             ].empty
             
-            if other_on_elective_for_my_date and i_am_on_elective_for_them_date:
+            if other_on_elective_for_my_date and i_am_on_elective_for_their_date:
                 if other_already_working_my_date or i_am_already_working_their_date:
                     status = "🔴 Shift Overlap / Conflict"
-                    notes = "One resident already scheduled for a shift on that date"
+                    notes = "One resident is already working a floor shift on that date"
                 else:
                     status = "🟢 Eligible Swap Partner"
                     notes = "Both on Elective & free of floor shifts"
@@ -190,11 +194,10 @@ if user_dates:
                     "Notes": notes
                 })
 
-        # Remove duplicate rows if a resident worked multiple shifts
         if eligible_swaps:
             df_swaps = pd.DataFrame(eligible_swaps).drop_duplicates()
             st.success(f"✅ Found {len(df_swaps)} possible weekend swap options for {selected_date}:")
-            st.caption("🟢 **Green Dot:** Clear of floor shifts & verified on Elective. | 🔴 **Red Dot:** Elective verified, but has a shift conflict.")
+            st.caption("🟢 **Green Dot:** Clear of floor shifts & verified on Elective. | 🔴 **Red Dot:** Elective verified, but has a shift overlap.")
             st.table(df_swaps)
         else:
             st.warning("No eligible reciprocal weekend swaps found for this shift date.")
