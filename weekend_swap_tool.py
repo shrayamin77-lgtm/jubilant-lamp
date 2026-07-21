@@ -61,42 +61,63 @@ user_dates = user_scheduled_shifts["Date"].tolist()
 if user_dates:
     date_input = st.selectbox("Select the weekend date you need to swap out of:", user_dates)
     
-    if st.button("🔄 Search Eligible Swappers"):
-        target_block_col = get_block_column_for_date(date_input)
+    if submit_button:
+        target_date_dt = pd.to_datetime(date_input)
+        my_block_col = get_block_column_for_date(date_input)
         
-        if not target_block_col:
-            st.error("Could not map the selected weekend date to an academic block.")
-        else:
-            eligible_matches = []
+        st.write(f"Searching for **mutually eligible** partners to swap {date_input} (Your Block: {my_block_col}).")
+        
+        eligible_matches = []
+        my_row = rotation_data[rotation_data["Resident"] == resident_input].iloc[0]
+        
+        # Helper to check if a specific resident is working on a specific date
+        def is_working(resident_name, check_date_str):
+            shift_df = weekend_coverage[weekend_coverage["Date"] == check_date_str]
+            if shift_df.empty: return False
+            coverage_list = [n.strip().lower() for n in str(shift_df.iloc[0]["Scheduled_Coverage"]).split(",")]
+            return resident_name.lower() in coverage_list
+
+        for _, row in rotation_data.iterrows():
+            co_intern = row["Resident"]
+            if co_intern == resident_input: continue
             
-            for _, row in rotation_data.iterrows():
-                co_intern = row["Resident"]
+            # 1. Partner must be on Elective during YOUR shift date
+            if row[my_block_col] != "Elective": continue
+            
+            # 2. Partner MUST NOT be working your shift date already
+            if is_working(co_intern, date_input): continue
+
+            # Check all their shifts
+            co_intern_shifts = weekend_coverage[
+                weekend_coverage["Scheduled_Coverage"].apply(lambda x: is_resident_scheduled(x, co_intern))
+            ]
+            
+            for _, shift in co_intern_shifts.iterrows():
+                partner_date = shift["Date"]
+                partner_date_dt = pd.to_datetime(partner_date)
                 
-                # Skip yourself
-                if co_intern == resident_input:
-                    continue
-                    
-                # Check if they are on an Elective block
-                if row[target_block_col] == "Elective":
-                    
-                    # Check when this co-intern is scheduled to work floor shifts
-                    co_intern_shifts = weekend_coverage[
-                        weekend_coverage["Scheduled_Coverage"].astype(str).str.lower().str.contains(co_intern.lower(), na=False)
-                    ]
-                    
-                    if not co_intern_shifts.empty:
-                        shift_dates = co_intern_shifts["Date"].tolist()
-                        formatted_dates = ", ".join(shift_dates)
-                        eligible_matches.append(f"**{co_intern}** (Scheduled: {formatted_dates})")
-                    else:
-                        eligible_matches.append(f"**{co_intern}** (Not working any floor weekends)")
-            
-            st.markdown("---")
-            if eligible_matches:
-                st.success(f"✅ **{len(eligible_matches)} potential swap options found** for {date_input} (Block: {target_block_col}):")
-                for match in eligible_matches:
-                    st.markdown(f"- {match}")
-            else:
-                st.warning(f"No co-interns are currently on an Elective block during the {target_block_col} window.")
-else:
-    st.info(f"🎉 **{resident_input}** is not scheduled for any floor coverage weekends in this file!")
+                if partner_date_dt <= target_date_dt: continue
+                
+                partner_block_col = get_block_column_for_date(partner_date)
+                if not partner_block_col: continue
+                
+                # 3. YOU must be on Elective during THEIR shift date
+                i_am_elective_for_partner = my_row[partner_block_col] == "Elective"
+                
+                # 4. YOU must not already be working their shift date
+                i_am_already_working = is_working(resident_input, partner_date)
+                
+                if i_am_elective_for_partner and not i_am_already_working:
+                    eligible_matches.append({
+                        "Partner": co_intern,
+                        "Date_to_Swap": partner_date,
+                        "Your_Status": "Elective",
+                        "Their_Status": "Elective"
+                    })
+        
+        if eligible_matches:
+            st.success(f"✅ Found {len(eligible_matches)} clean reciprocal swap opportunities:")
+            df_results = pd.DataFrame(eligible_matches)
+            st.table(df_results)
+        else:
+            st.warning("No reciprocal swaps found where both parties are free to cover the other.")
